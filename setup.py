@@ -1,0 +1,36 @@
+from pathlib import Path
+
+from setuptools import find_packages, setup
+
+
+package_name = "dvrk_pybullet"
+
+setup(
+    name=package_name,
+    version="0.1.0",
+    packages=find_packages(exclude=["test"]),
+    data_files=[
+        ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
+        (f"share/{package_name}", ["package.xml"]),
+        (f"share/{package_name}/share", ["share/pybullet.yaml"]),
+        (f"share/{package_name}/share/scenes", [
+            str(path) for path in sorted(Path("share/scenes").glob("*.yaml"))
+        ]),
+        (f"share/{package_name}/scripts", [
+            "scripts/bootstrap_venv.sh",
+            "scripts/colcon-venv",
+        ]),
+    ],
+    install_requires=["setuptools", "numpy", "PyYAML"],
+    zip_safe=True,
+    maintainer="dVRK maintainers",
+    maintainer_email="support@intusurg.com",
+    description="PyBullet backend for the common dVRK simulator runtime.",
+    license="Apache-2.0",
+    entry_points={
+        "console_scripts": [
+            "simulator = dvrk_pybullet.node:main",
+            "dvrk_pybullet_preview = dvrk_pybullet.preview:main",
+        ],
+    },
+)

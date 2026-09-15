@@ -1,0 +1,17 @@
+# ROS 2 / colcon build products
+build/
+install/
+log/
+
+# Generated model cache
+.generated/
+
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# Virtual environments and editors
+.venv/
+.vscode/
