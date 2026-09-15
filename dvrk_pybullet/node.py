@@ -55,6 +55,7 @@ from .configuration import (
     load_simulator_config,
 )
 from .camera import CameraOptions
+from .errors import PyBulletDependencyError
 from .runtime import RuntimeOptions
 from .urdf_materializer import SUPPORTED_ROBOTS
 from .world_runtime import PyBulletWorldRuntime
@@ -392,7 +393,7 @@ class DvrkPyBulletNode(Node):
             descriptor=ParameterDescriptor(dynamic_typing=True),
         )
         self.declare_parameter("endoscope", endoscope or "Si_straight")
-        self.declare_parameter("gui", False if gui is None else gui)
+        self.declare_parameter("gui", True if gui is None else gui)
         self.declare_parameter(
             "simulation_rate_hz",
             120.0 if simulation_rate_hz is None else simulation_rate_hz,
@@ -546,7 +547,7 @@ def _parse_command_line(args: list[str]) -> argparse.Namespace:
     return parser.parse_args(remove_ros_args(args))
 
 
-def main(args=None) -> None:
+def main(args=None) -> int:
     raw_args = list(sys.argv[1:] if args is None else args)
     options = _parse_command_line(raw_args)
     config_path = options.config
@@ -601,6 +602,9 @@ def main(args=None) -> None:
         runtime.run(node.accept_snapshots, rclpy.ok)
     except KeyboardInterrupt:
         pass
+    except PyBulletDependencyError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     finally:
         if runtime is not None:
             runtime.shutdown()
@@ -612,7 +616,8 @@ def main(args=None) -> None:
             node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

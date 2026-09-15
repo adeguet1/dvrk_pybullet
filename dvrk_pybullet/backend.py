@@ -13,8 +13,15 @@ def load_pybullet() -> ModuleType:
         import pybullet
     except ImportError as error:
         raise PyBulletDependencyError(
-            "PyBullet is not installed. Activate the documented "
-            "system-site-packages virtual environment and run "
-            "`python -m pip install pybullet`."
+            "PyBullet could not be imported by this executable.\n"
+            "From the colcon workspace root, bootstrap the venv, activate it, "
+            "and rebuild:\n\n"
+            "  ./src/dvrk/dvrk_pybullet/scripts/bootstrap_venv.sh\n"
+            "  source .venv/bin/activate\n"
+            "  hash -r\n"
+            "  colcon build --symlink-install --packages-select "
+            "dvrk_simulator_base dvrk_pybullet\n"
+            "  source install/setup.bash\n\n"
+            "Then retry the ros2 run command."
         ) from error
     return pybullet

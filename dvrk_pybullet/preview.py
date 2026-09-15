@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 
 from .backend import load_pybullet
 from .configuration import load_installed_robot_config
+from .errors import PyBulletDependencyError
 from .robot import load_robot, reset_joint_positions
 from .urdf_materializer import materialize_virtual_psm, SUPPORTED_PSMS
 
@@ -25,7 +27,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.duration < 0.0:
         parser.error("--duration cannot be negative")
 
-    pybullet = load_pybullet()
+    try:
+        pybullet = load_pybullet()
+    except PyBulletDependencyError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     connection = pybullet.connect(pybullet.GUI)
     if connection < 0:
         raise RuntimeError("PyBullet could not create a GUI connection")

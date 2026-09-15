@@ -85,6 +85,12 @@ def test_simulator_config_keeps_runtime_settings_out_of_cli(tmp_path):
     assert config.scene == "ECM_PSM1_PSM2.yaml"
 
 
+def test_simulator_config_defaults_to_gui(tmp_path):
+    path = tmp_path / "pybullet.yaml"
+    path.write_text("", encoding="utf-8")
+    assert node_module.load_simulator_config(path).gui is True
+
+
 def test_gui_argument_accepts_false_and_flag_forms():
     assert node_module._parse_command_line(["--gui", "false"]).gui is False
     assert node_module._parse_command_line(["--gui"]).gui is True
