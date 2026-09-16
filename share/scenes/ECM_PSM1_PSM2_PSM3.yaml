@@ -6,19 +6,19 @@ scene:
     PSM3: {position: [0.173205081, 0.000000000, 0.100000000], orientation_xyzw: [0.000000000, 0.500000000, 0.000000000, 0.866025404]}
     ECM: {position: [0.000000000, 0.000000000, 0.200000000], orientation_xyzw: [0.000000000, 0.000000000, 0.000000000, 1.000000000]}
   camera:
-    mode: mono
+    mode: stereo
     owner: ECM
     frame: ECM_optical
-    width: 1280
-    height: 720
+    width: 800
+    height: 450
     horizontal_fov_deg: 60.0
     near_clip_m: 0.005
     far_clip_m: 10.0
     encoding: rgba8
     baseline_m: 0.006
-    publish_rate_hz: 30.0
+    publish_rate_hz: 20.0
     transports: [unixfd]
-    unixfd: {socket_path: /tmp/dvrk-pybullet-ECM.sock}
+    unixfd: {socket_path: "@dvrk:pybullet:stereo_source"}
   robots:
     - {config: PSM1.yaml, instrument: "420006"}
     - {config: PSM2.yaml, instrument: "420006"}

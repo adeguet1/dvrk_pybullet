@@ -88,12 +88,12 @@ parameters such as rates and queue capacity.
 Camera settings live in each scene's `camera` mapping and use the same core
 field names as `dvrk_isaac_sim`: `mode`, `owner`, `frame`, `width`, `height`,
 `horizontal_fov_deg`, `near_clip_m`, `far_clip_m`, `encoding`,
-`baseline_m`, `publish_rate_hz`, and `transports`. PyBullet currently supports
-mono `rgba8` output and adds this transport-specific section:
+`baseline_m`, `publish_rate_hz`, and `transports`. PyBullet supports mono and
+side-by-side stereo `rgba8` output and adds this transport-specific section:
 
 ```yaml
 transports: [unixfd]
-unixfd: {socket_path: /tmp/dvrk-pybullet-ECM.sock}
+unixfd: {socket_path: "@dvrk:pybullet:mono_source"}
 ```
 
 Start a scene containing an ECM, then connect a GStreamer viewer from another
@@ -102,15 +102,30 @@ terminal:
 ```shell
 ros2 run dvrk_pybullet simulator --scene ECM_PSM1_PSM2.yaml --gui true
 
-gst-launch-1.0 unixfdsrc socket-path=/tmp/dvrk-pybullet-ECM.sock \
+gst-launch-1.0 unixfdsrc socket-path=dvrk:pybullet:mono_source \
+  socket-type=abstract \
   ! queue leaky=downstream max-size-buffers=1 \
   ! videoconvert ! autovideosink sync=false
 ```
 
-The producer uses one Linux `memfd` per frame and a one-frame leaky queue, so a
+The socket is named `@dvrk:<package>:<stream>`, identifying `pybullet` as the
+producer and `mono_source` as the stream. A scene with `mode: stereo` uses
+`@dvrk:pybullet:stereo_source`; `width` and `height` remain per-eye dimensions.
+Both endpoints use the `dvrk_data` abstract socket notation. The producer uses
+one Linux `memfd` per frame and a one-frame leaky queue, so a
 slow or disconnected viewer cannot build an image backlog. Headless operation
 uses PyBullet's EGL renderer. Set `renderer: tiny` in `pybullet.yaml` for a
 CPU-rendered diagnostic run.
+
+The [`share/open-xr`](share/open-xr) configuration connects the three-PSM
+patient-cart scene to a Quest surgeon console through `sawOpenXR`. It includes
+the `dvrk_system` JSON, the low-latency Unix-FD GStreamer input, and startup
+instructions. Once the separately built optional `saw_openxr` package is
+sourced, start the complete setup with:
+
+```bash
+ros2 launch dvrk_pybullet open_xr.launch.py
+```
 
 `ECM_PSM1_PSM2_PSM3.yaml` adds PSM3. Scene files select each robot asset and
 set non-overlapping world base poses. All arms have independent command

@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import time
 from typing import Callable, Mapping
+import xml.etree.ElementTree as ET
 
 from dvrk_simulator_base.command_mailbox import CommandMailboxes
 from dvrk_simulator_base.config import RobotConfig
@@ -54,11 +55,14 @@ class PyBulletWorldRuntime:
             raise PyBulletBackendError("PyBullet could not create a world connection")
         try:
             self.pybullet.setGravity(0.0, 0.0, -9.81)
+            # EGL must be registered before loading robot visual shapes:
+            # the plugin does not import bodies loaded before it was started.
+            self._initialize_camera()
             snapshots = {
                 name: arm.initialize(self.connection)
                 for name, arm in self.arms.items()
             }
-            self._initialize_camera()
+            self._restore_egl_mesh_material_colors()
             if self.options.gui:
                 self.pybullet.resetDebugVisualizerCamera(
                     cameraDistance=0.8,
@@ -80,6 +84,50 @@ class PyBulletWorldRuntime:
         snapshots = {name: arm.finish_step() for name, arm in self.arms.items()}
         self._publish_camera_if_due(snapshots)
         return snapshots
+
+    def _restore_egl_mesh_material_colors(self) -> None:
+        """Keep repeated OBJ instances consistent despite EGL's material cache bug."""
+        if self._egl_plugin < 0:
+            return
+        # EGL reuses geometry for an identical visual, but fails to copy its
+        # MTL-derived color. Restore the first instance's imported color on
+        # subsequent instances. Explicit URDF materials remain independent.
+        colors = {}
+        for arm in self.arms.values():
+            root = ET.parse(arm.artifact.urdf_path).getroot()
+            shapes = {
+                shape[1]: shape
+                for shape in self.pybullet.getVisualShapeData(
+                    arm.robot.body_id, physicsClientId=self.connection
+                )
+            }
+            for link in root.findall("link"):
+                if len(link.findall("visual")) != 1 or link.find("visual/material") is not None:
+                    continue
+                mesh = link.find("visual/geometry/mesh")
+                if mesh is None or not mesh.get("filename", "").lower().endswith(".obj"):
+                    continue
+                index = arm.robot.link_indices[link.attrib["name"]]
+                shape = shapes.get(index)
+                if shape is None:
+                    continue
+                # Cached EGL shape metadata also omits the mesh filename and
+                # dimensions, so derive the identity from the generated URDF.
+                origin = link.find("visual/origin")
+                origin_attrs = {} if origin is None else origin.attrib
+                key = (
+                    mesh.get("filename"),
+                    tuple(float(v) for v in mesh.get("scale", "1 1 1").split()),
+                    tuple(float(v) for v in origin_attrs.get("xyz", "0 0 0").split()),
+                    tuple(float(v) for v in origin_attrs.get("rpy", "0 0 0").split()),
+                )
+                if key in colors:
+                    self.pybullet.changeVisualShape(
+                        arm.robot.body_id, index, rgbaColor=colors[key],
+                        physicsClientId=self.connection,
+                    )
+                elif shape[4]:
+                    colors[key] = shape[7]
 
     def _initialize_camera(self) -> None:
         options = self.camera_options

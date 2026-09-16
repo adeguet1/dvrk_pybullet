@@ -51,6 +51,8 @@ def load_robot(
         basePosition=tuple(float(value) for value in base_position),
         baseOrientation=tuple(float(value) for value in base_orientation_xyzw),
         useFixedBase=True,
+        # Read the OBJ material colors instead of PyBullet's default link palette.
+        flags=pybullet.URDF_USE_MATERIAL_COLORS_FROM_MTL,
     )
     if body_id < 0:
         raise PyBulletBackendError(f"PyBullet failed to load URDF: {path}")

@@ -590,7 +590,8 @@ def main(args=None) -> int:
         if runtime.video_sink is not None:
             camera = node.camera_options
             node.get_logger().info(
-                f"ECM camera: RGBA {camera.width}x{camera.height} at "
+                f"ECM camera: {camera.mode} RGBA "
+                f"{camera.transport_width}x{camera.height} at "
                 f"{camera.rate_hz:g} Hz on {camera.socket_path}"
             )
         executor = SingleThreadedExecutor()

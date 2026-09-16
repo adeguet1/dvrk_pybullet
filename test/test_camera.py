@@ -39,13 +39,22 @@ def test_optical_axes_map_to_pybullet_view_vectors():
     np.testing.assert_allclose(up, [0.0, 0.0, 1.0])
 
 
+def test_camera_accepts_canonical_dvrk_abstract_socket():
+    options = CameraOptions(socket_path="@dvrk:pybullet:test")
+    assert options.socket_path == "@dvrk:pybullet:test"
+
+
 class _FakePyBullet:
+    def __init__(self):
+        self.views = []
+
     def computeProjectionMatrixFOV(self, **kwargs):
         self.projection = kwargs
         return "projection"
 
     def computeViewMatrix(self, eye, target, up):
         self.view = (eye, target, up)
+        self.views.append(self.view)
         return "view"
 
     def getCameraImage(self, **kwargs):
@@ -63,3 +72,15 @@ def test_camera_returns_contiguous_rgba():
     assert frame.rgba.flags.c_contiguous
     assert frame.simulation_time == 1.25
     assert backend.image["physicsClientId"] == 7
+
+
+def test_stereo_camera_renders_left_then_right_side_by_side():
+    backend = _FakePyBullet()
+    options = CameraOptions(mode="stereo", width=4, height=3, baseline_m=0.006)
+    camera = PyBulletCamera(backend, 7, options, renderer=99)
+    frame = camera.capture(Pose(np.zeros(3), np.eye(3)), 1.25)
+    assert frame.rgba.shape == (3, 8, 4)
+    assert frame.rgba.flags.c_contiguous
+    assert options.transport_width == 8
+    np.testing.assert_allclose(backend.views[0][0], [0.0, 0.003, 0.0])
+    np.testing.assert_allclose(backend.views[1][0], [0.0, -0.003, 0.0])

@@ -19,14 +19,14 @@ def _load_gstreamer():
 
         gi.require_version("Gst", "1.0")
         gi.require_version("GstAllocators", "1.0")
-        from gi.repository import Gst, GstAllocators
+        from gi.repository import Gio, Gst, GstAllocators
     except (ImportError, ValueError) as error:
         raise GStreamerDependencyError(
             "GStreamer Python bindings and GstAllocators are required; install "
             "python3-gi, gstreamer1.0-plugins-base, and gstreamer1.0-plugins-bad"
         ) from error
     Gst.init(None)
-    return Gst, GstAllocators
+    return Gst, GstAllocators, Gio
 
 
 def _prepare_socket_path(path: Path) -> None:
@@ -56,7 +56,7 @@ class UnixFdVideoSink:
 
     def __init__(self, options: CameraOptions) -> None:
         self.options = options
-        self.Gst, self.GstAllocators = _load_gstreamer()
+        self.Gst, self.GstAllocators, self.Gio = _load_gstreamer()
         self.pipeline = None
         self.source = None
         self.frames_pushed = 0
@@ -65,7 +65,9 @@ class UnixFdVideoSink:
     def start(self) -> None:
         if self.pipeline is not None:
             return
-        _prepare_socket_path(self.options.socket_path)
+        abstract_socket = isinstance(self.options.socket_path, str)
+        if not abstract_socket:
+            _prepare_socket_path(self.options.socket_path)
         Gst = self.Gst
         pipeline = Gst.Pipeline.new("dvrk-camera")
         source = Gst.ElementFactory.make("appsrc", "camera-source")
@@ -77,7 +79,7 @@ class UnixFdVideoSink:
             )
         rate = Fraction(str(self.options.rate_hz)).limit_denominator(1001)
         caps = Gst.Caps.from_string(
-            f"video/x-raw,format=RGBA,width={self.options.width},"
+            f"video/x-raw,format=RGBA,width={self.options.transport_width},"
             f"height={self.options.height},framerate={rate.numerator}/{rate.denominator}"
         )
         source.set_property("caps", caps)
@@ -88,7 +90,11 @@ class UnixFdVideoSink:
         queue.set_property("max-size-bytes", 0)
         queue.set_property("max-size-time", 0)
         queue.set_property("leaky", 2)  # downstream: discard the oldest frame
-        sink.set_property("socket-path", str(self.options.socket_path))
+        socket_path = str(self.options.socket_path)
+        if abstract_socket:
+            socket_path = socket_path[1:]
+            sink.set_property("socket-type", self.Gio.UnixSocketAddressType.ABSTRACT)
+        sink.set_property("socket-path", socket_path)
         sink.set_property("sync", False)
         sink.set_property("async", False)
         pipeline.add(source)
@@ -104,13 +110,14 @@ class UnixFdVideoSink:
             raise PyBulletBackendError("camera GStreamer pipeline failed to start")
         pipeline.get_state(2 * Gst.SECOND)
         self._raise_bus_error()
-        try:
-            self._socket_inode = self.options.socket_path.stat().st_ino
-        except FileNotFoundError:
-            self.close()
-            raise PyBulletBackendError(
-                f"GStreamer did not create camera socket {self.options.socket_path}"
-            )
+        if not abstract_socket:
+            try:
+                self._socket_inode = self.options.socket_path.stat().st_ino
+            except FileNotFoundError:
+                self.close()
+                raise PyBulletBackendError(
+                    f"GStreamer did not create camera socket {self.options.socket_path}"
+                )
 
     def _raise_bus_error(self) -> None:
         if self.pipeline is None:
@@ -125,7 +132,7 @@ class UnixFdVideoSink:
     def push(self, frame: VideoFrame) -> None:
         if self.source is None:
             raise RuntimeError("camera video sink is not started")
-        expected = (self.options.height, self.options.width, 4)
+        expected = (self.options.height, self.options.transport_width, 4)
         if frame.rgba.shape != expected or frame.rgba.dtype.name != "uint8":
             raise ValueError(f"camera frame must be uint8 RGBA with shape {expected}")
         size = frame.rgba.nbytes
@@ -167,6 +174,8 @@ class UnixFdVideoSink:
         if pipeline is not None:
             pipeline.set_state(self.Gst.State.NULL)
             pipeline.get_state(2 * self.Gst.SECOND)
+        if isinstance(self.options.socket_path, str):
+            return
         try:
             current = self.options.socket_path.lstat()
         except FileNotFoundError:
