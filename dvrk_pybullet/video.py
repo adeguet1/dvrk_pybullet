@@ -85,7 +85,16 @@ class UnixFdVideoSink:
         source.set_property("caps", caps)
         source.set_property("is-live", True)
         source.set_property("format", Gst.Format.TIME)
+        # Match dvrk_data's live-source convention: appsrc assigns PTS in the
+        # GStreamer pipeline running-time domain.  Realtime observations, if
+        # ever needed, belong in separate metadata rather than display PTS.
+        source.set_property("do-timestamp", True)
         source.set_property("block", False)
+        # Keep the producer non-blocking even when one of several unixfdsrc
+        # clients is slow.  A camera stream should drop stale frames, never
+        # make the simulation wait for a display.
+        source.set_property("max-buffers", 1)
+        source.set_property("leaky-type", 2)  # downstream: discard oldest
         queue.set_property("max-size-buffers", 1)
         queue.set_property("max-size-bytes", 0)
         queue.set_property("max-size-time", 0)
@@ -152,8 +161,6 @@ class UnixFdVideoSink:
             owned_by_gstreamer = True
             buffer = self.Gst.Buffer.new()
             buffer.append_memory(memory)
-            buffer.pts = round(frame.simulation_time * self.Gst.SECOND)
-            buffer.dts = buffer.pts
             buffer.duration = round(self.Gst.SECOND / self.options.rate_hz)
             result = self.source.emit("push-buffer", buffer)
             if result != self.Gst.FlowReturn.OK:

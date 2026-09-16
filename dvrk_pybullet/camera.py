@@ -17,13 +17,18 @@ class CameraOptions:
     mode: str = "mono"
     renderer: str = "egl"
     socket_path: str | Path = "@dvrk:pybullet:mono_source"
-    width: int = 1280
-    height: int = 720
+    width: int = 1920
+    height: int = 1080
     rate_hz: float = 30.0
     horizontal_fov_degrees: float = 60.0
     near_m: float = 0.01
     far_m: float = 10.0
     baseline_m: float = 0.006
+    light_enabled: bool = True
+    light_distance_m: float = 1.0
+    light_ambient: float = 0.45
+    light_diffuse: float = 0.65
+    light_specular: float = 0.15
 
     def __post_init__(self) -> None:
         renderer = str(self.renderer).lower()
@@ -55,6 +60,12 @@ class CameraOptions:
             raise ValueError("camera clipping planes must satisfy 0 < near < far")
         if not np.isfinite(self.baseline_m) or self.baseline_m <= 0.0:
             raise ValueError("camera baseline must be finite and positive")
+        if self.light_distance_m <= 0.0:
+            raise ValueError("camera light distance must be positive")
+        for name in ("light_ambient", "light_diffuse", "light_specular"):
+            value = float(getattr(self, name))
+            if not np.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError(f"camera {name} must be between 0 and 1")
         object.__setattr__(self, "mode", mode)
         object.__setattr__(self, "renderer", renderer)
         object.__setattr__(self, "socket_path", path)
@@ -94,13 +105,20 @@ class CameraOptions:
                     f"{'mono' if camera.mode == 'off' else camera.mode}_source",
                 )
             ),
-            width=int(settings.get("width", 1280)),
-            height=int(settings.get("height", 720)),
+            width=int(settings.get("width", 1920)),
+            height=int(settings.get("height", 1080)),
             rate_hz=float(settings.get("publish_rate_hz", 30.0)),
             horizontal_fov_degrees=float(settings.get("horizontal_fov_deg", 60.0)),
             near_m=float(settings.get("near_clip_m", 0.005)),
             far_m=float(settings.get("far_clip_m", 10.0)),
             baseline_m=float(settings.get("baseline_m", 0.006)),
+            **{
+                "light_enabled": bool((settings.get("light", {}) or {}).get("enabled", True)),
+                "light_distance_m": float((settings.get("light", {}) or {}).get("distance_m", 1.0)),
+                "light_ambient": float((settings.get("light", {}) or {}).get("ambient", 0.45)),
+                "light_diffuse": float((settings.get("light", {}) or {}).get("diffuse", 0.65)),
+                "light_specular": float((settings.get("light", {}) or {}).get("specular", 0.15)),
+            },
         )
 
 
@@ -136,7 +154,7 @@ class PyBulletCamera:
     def _capture_eye(self, optical_pose: Pose) -> np.ndarray:
         eye, target, up = view_vectors(optical_pose)
         view = self.pybullet.computeViewMatrix(eye, target, up)
-        result = self.pybullet.getCameraImage(
+        image_options = dict(
             width=self.options.width,
             height=self.options.height,
             viewMatrix=view,
@@ -144,6 +162,19 @@ class PyBulletCamera:
             renderer=self.renderer,
             physicsClientId=self.connection,
         )
+        if self.options.light_enabled:
+            # PyBullet exposes a directional light rather than a point light
+            # for getCameraImage.  Aim it along the endoscope optical axis.
+            image_options.update(
+                lightDirection=tuple(target - eye),
+                lightColor=(1.0, 1.0, 1.0),
+                lightDistance=self.options.light_distance_m,
+                shadow=1,
+                lightAmbientCoeff=self.options.light_ambient,
+                lightDiffuseCoeff=self.options.light_diffuse,
+                lightSpecularCoeff=self.options.light_specular,
+            )
+        result = self.pybullet.getCameraImage(**image_options)
         rgba = np.asarray(result[2], dtype=np.uint8).reshape(
             self.options.height, self.options.width, 4
         )

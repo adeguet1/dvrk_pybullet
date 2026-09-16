@@ -9,13 +9,19 @@ scene:
     mode: stereo
     owner: ECM
     frame: ECM_optical
-    width: 800
-    height: 450
+    width: 1280
+    height: 720
     horizontal_fov_deg: 60.0
     near_clip_m: 0.005
     far_clip_m: 10.0
     encoding: rgba8
     baseline_m: 0.006
+    light:
+      enabled: true
+      distance_m: 1.0
+      ambient: 0.45
+      diffuse: 0.65
+      specular: 0.15
     publish_rate_hz: 20.0
     transports: [unixfd]
     unixfd: {socket_path: "@dvrk:pybullet:stereo_source"}

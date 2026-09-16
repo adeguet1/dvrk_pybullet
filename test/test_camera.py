@@ -72,6 +72,8 @@ def test_camera_returns_contiguous_rgba():
     assert frame.rgba.flags.c_contiguous
     assert frame.simulation_time == 1.25
     assert backend.image["physicsClientId"] == 7
+    assert backend.image["lightDirection"] == (1.0, 0.0, 0.0)
+    assert backend.image["shadow"] == 1
 
 
 def test_stereo_camera_renders_left_then_right_side_by_side():
