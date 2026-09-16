@@ -10,7 +10,6 @@ import pytest
 
 
 class FakePyBullet:
-    URDF_USE_MATERIAL_COLORS_FROM_MTL = 32768
 
     def __init__(self, names=("yaw", "pitch", "insertion")):
         self.reset_calls = []

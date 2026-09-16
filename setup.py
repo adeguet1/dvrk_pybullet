@@ -21,6 +21,9 @@ setup(
             str(path) for path in sorted(Path("share/open-xr").glob("*"))
             if path.is_file()
         ]),
+        (f"share/{package_name}/share/schemas", [
+            "share/schemas/openxr-video.schema.json",
+        ]),
         (f"share/{package_name}/scripts", [
             "scripts/bootstrap_venv.sh",
             "scripts/colcon-venv",

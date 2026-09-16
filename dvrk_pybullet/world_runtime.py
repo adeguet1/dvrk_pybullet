@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-import importlib.util
 import time
-from typing import Callable, Mapping
-import xml.etree.ElementTree as ET
+from typing import Mapping
+
+import numpy as np
 
 from dvrk_simulator_base.command_mailbox import CommandMailboxes
 from dvrk_simulator_base.config import RobotConfig
 from dvrk_simulator_base.snapshots import ArmSnapshot
 
 from .backend import load_pybullet
-from .camera import CameraOptions, PyBulletCamera
+from .camera_worker import CameraWorker
 from .errors import PyBulletBackendError
 from .runtime import PyBulletRuntime, RuntimeOptions
-from .video import UnixFdVideoSink
 
 
 class PyBulletWorldRuntime:
@@ -24,8 +23,7 @@ class PyBulletWorldRuntime:
         configs: tuple[RobotConfig, ...],
         options: RuntimeOptions,
         commands: Mapping[str, CommandMailboxes],
-        camera_options: CameraOptions | None = None,
-        video_sink_factory: Callable[[CameraOptions], object] = UnixFdVideoSink,
+        camera_options=None,
     ) -> None:
         if not configs:
             raise ValueError("a PyBullet world requires at least one robot")
@@ -33,11 +31,7 @@ class PyBulletWorldRuntime:
         self.pybullet = load_pybullet()
         self.connection = -1
         self.camera_options = camera_options
-        self.camera = None
-        self.video_sink = None
-        self._video_sink_factory = video_sink_factory
-        self._egl_plugin = -1
-        self._next_camera_time = 0.0
+        self.camera_worker = None
         self.arms = {
             config.name: PyBulletRuntime(
                 config,
@@ -55,14 +49,11 @@ class PyBulletWorldRuntime:
             raise PyBulletBackendError("PyBullet could not create a world connection")
         try:
             self.pybullet.setGravity(0.0, 0.0, -9.81)
-            # EGL must be registered before loading robot visual shapes:
-            # the plugin does not import bodies loaded before it was started.
-            self._initialize_camera()
             snapshots = {
                 name: arm.initialize(self.connection)
                 for name, arm in self.arms.items()
             }
-            self._restore_egl_mesh_material_colors()
+            self._start_camera_worker(snapshots)
             if self.options.gui:
                 self.pybullet.resetDebugVisualizerCamera(
                     cameraDistance=0.8,
@@ -75,6 +66,36 @@ class PyBulletWorldRuntime:
             self.shutdown()
             raise
 
+    def _start_camera_worker(self, snapshots: Mapping[str, ArmSnapshot]) -> None:
+        if (
+            self.camera_options is None
+            or not self.camera_options.enabled
+            or "ECM" not in self.arms
+        ):
+            return
+        self.camera_worker = CameraWorker(self.arms, self.camera_options)
+        self.camera_worker.start(self._camera_state(snapshots))
+
+    def _camera_state(
+        self, snapshots: Mapping[str, ArmSnapshot]
+    ) -> tuple[np.ndarray, ...]:
+        joint_positions = []
+        for arm in self.arms.values():
+            count = self.pybullet.getNumJoints(arm.robot.body_id)
+            states = self.pybullet.getJointStates(
+                arm.robot.body_id, tuple(range(count)),
+                physicsClientId=self.connection,
+            )
+            joint_positions.append(
+                np.asarray([state[0] for state in states], dtype=float)
+            )
+        camera_pose = snapshots["ECM"].measured_cp_world
+        return (
+            *joint_positions,
+            np.asarray(camera_pose.position, dtype=float),
+            np.asarray(camera_pose.orientation, dtype=float).reshape(9),
+        )
+
     def step(self) -> dict[str, ArmSnapshot]:
         now_ns = time.monotonic_ns()
         now = now_ns * 1e-9
@@ -82,97 +103,10 @@ class PyBulletWorldRuntime:
             arm.prepare_step(now_ns, now)
         self.pybullet.stepSimulation()
         snapshots = {name: arm.finish_step() for name, arm in self.arms.items()}
-        self._publish_camera_if_due(snapshots)
+        if self.camera_worker is not None:
+            self.camera_worker.submit(self._camera_state(snapshots))
+            self.camera_worker.check()
         return snapshots
-
-    def _restore_egl_mesh_material_colors(self) -> None:
-        """Keep repeated OBJ instances consistent despite EGL's material cache bug."""
-        if self._egl_plugin < 0:
-            return
-        # EGL reuses geometry for an identical visual, but fails to copy its
-        # MTL-derived color. Restore the first instance's imported color on
-        # subsequent instances. Explicit URDF materials remain independent.
-        colors = {}
-        for arm in self.arms.values():
-            root = ET.parse(arm.artifact.urdf_path).getroot()
-            shapes = {
-                shape[1]: shape
-                for shape in self.pybullet.getVisualShapeData(
-                    arm.robot.body_id, physicsClientId=self.connection
-                )
-            }
-            for link in root.findall("link"):
-                if len(link.findall("visual")) != 1 or link.find("visual/material") is not None:
-                    continue
-                mesh = link.find("visual/geometry/mesh")
-                if mesh is None or not mesh.get("filename", "").lower().endswith(".obj"):
-                    continue
-                index = arm.robot.link_indices[link.attrib["name"]]
-                shape = shapes.get(index)
-                if shape is None:
-                    continue
-                # Cached EGL shape metadata also omits the mesh filename and
-                # dimensions, so derive the identity from the generated URDF.
-                origin = link.find("visual/origin")
-                origin_attrs = {} if origin is None else origin.attrib
-                key = (
-                    mesh.get("filename"),
-                    tuple(float(v) for v in mesh.get("scale", "1 1 1").split()),
-                    tuple(float(v) for v in origin_attrs.get("xyz", "0 0 0").split()),
-                    tuple(float(v) for v in origin_attrs.get("rpy", "0 0 0").split()),
-                )
-                if key in colors:
-                    self.pybullet.changeVisualShape(
-                        arm.robot.body_id, index, rgbaColor=colors[key],
-                        physicsClientId=self.connection,
-                    )
-                elif shape[4]:
-                    colors[key] = shape[7]
-
-    def _initialize_camera(self) -> None:
-        options = self.camera_options
-        if options is None or not options.enabled or "ECM" not in self.arms:
-            return
-        if options.renderer == "tiny":
-            renderer = self.pybullet.ER_TINY_RENDERER
-        elif self.options.gui:
-            renderer = self.pybullet.ER_BULLET_HARDWARE_OPENGL
-        else:
-            spec = importlib.util.find_spec("eglRenderer")
-            if spec is None or not spec.origin:
-                raise PyBulletBackendError(
-                    "headless EGL renderer is unavailable; install the PyBullet EGL "
-                    "plugin or set renderer: tiny in pybullet.yaml"
-                )
-            self._egl_plugin = self.pybullet.loadPlugin(
-                spec.origin, "_eglRendererPlugin", physicsClientId=self.connection
-            )
-            if self._egl_plugin < 0:
-                raise PyBulletBackendError(
-                    "PyBullet failed to load its headless EGL renderer; use "
-                    "renderer: tiny in pybullet.yaml to diagnose without GPU rendering"
-                )
-            renderer = self.pybullet.ER_BULLET_HARDWARE_OPENGL
-        self.camera = PyBulletCamera(
-            self.pybullet, self.connection, options, renderer
-        )
-        self.video_sink = self._video_sink_factory(options)
-        self.video_sink.start()
-
-    def _publish_camera_if_due(
-        self, snapshots: Mapping[str, ArmSnapshot]
-    ) -> None:
-        if self.camera is None or self.video_sink is None:
-            return
-        snapshot = snapshots["ECM"]
-        if snapshot.simulation_time + 1e-12 < self._next_camera_time:
-            return
-        self.video_sink.push(
-            self.camera.capture(snapshot.measured_cp_world, snapshot.simulation_time)
-        )
-        period = 1.0 / self.camera_options.rate_hz
-        while self._next_camera_time <= snapshot.simulation_time + 1e-12:
-            self._next_camera_time += period
 
     def is_connected(self) -> bool:
         return self.connection >= 0 and bool(self.pybullet.isConnected(self.connection))
@@ -192,21 +126,11 @@ class PyBulletWorldRuntime:
                 deadline = time.monotonic()
 
     def shutdown(self) -> None:
-        if self.video_sink is not None:
-            self.video_sink.close()
-        self.video_sink = None
-        self.camera = None
+        if self.camera_worker is not None:
+            self.camera_worker.close()
+        self.camera_worker = None
         for arm in self.arms.values():
             arm.shutdown()
-        if (
-            self._egl_plugin >= 0
-            and self.connection >= 0
-            and self.pybullet.isConnected(self.connection)
-        ):
-            self.pybullet.unloadPlugin(
-                self._egl_plugin, physicsClientId=self.connection
-            )
-        self._egl_plugin = -1
         if self.connection >= 0 and self.pybullet.isConnected(self.connection):
             self.pybullet.disconnect(self.connection)
         self.connection = -1

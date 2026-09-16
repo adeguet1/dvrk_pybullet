@@ -587,7 +587,7 @@ def main(args=None) -> int:
         node.get_logger().info(
             "loaded shared PyBullet world: " + ", ".join(node.arm_interfaces)
         )
-        if runtime.video_sink is not None:
+        if runtime.camera_worker is not None:
             camera = node.camera_options
             node.get_logger().info(
                 f"ECM camera: {camera.mode} RGBA "

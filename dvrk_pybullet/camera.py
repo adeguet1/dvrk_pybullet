@@ -1,4 +1,4 @@
-"""ECM optical camera rendering on the PyBullet owner thread."""
+"""ECM optical camera rendering in the dedicated PyBullet render process."""
 
 from __future__ import annotations
 
