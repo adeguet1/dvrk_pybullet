@@ -10,11 +10,15 @@ import numpy as np
 from dvrk_simulator_base.command_mailbox import CommandMailboxes
 from dvrk_simulator_base.config import RobotConfig
 from dvrk_simulator_base.snapshots import ArmSnapshot
+from dvrk_simulator_base.scene import SceneObject
 
 from .backend import load_pybullet
 from .camera_worker import CameraWorker
+from .collision_debug import CollisionShapeOverlay
 from .errors import PyBulletBackendError
+from .grasp import GraspManager
 from .runtime import PyBulletRuntime, RuntimeOptions
+from .scene_objects import load_scene_objects, resolve_asset_uri
 
 
 class PyBulletWorldRuntime:
@@ -24,6 +28,7 @@ class PyBulletWorldRuntime:
         options: RuntimeOptions,
         commands: Mapping[str, CommandMailboxes],
         camera_options=None,
+        scene_objects: tuple[SceneObject, ...] = (),
     ) -> None:
         if not configs:
             raise ValueError("a PyBullet world requires at least one robot")
@@ -31,6 +36,15 @@ class PyBulletWorldRuntime:
         self.pybullet = load_pybullet()
         self.connection = -1
         self.camera_options = camera_options
+        self.scene_object_specs = scene_objects
+        self.scene_objects = {}
+        self.grasp_manager = None
+        self.collision_debug = None
+        self._reset_requested = False
+        self._initial_object_poses = {}
+        self.monitor = None
+        self._step_count = 0
+        self._rate_started_at = time.monotonic()
         self.camera_worker = None
         self.arms = {
             config.name: PyBulletRuntime(
@@ -49,10 +63,27 @@ class PyBulletWorldRuntime:
             raise PyBulletBackendError("PyBullet could not create a world connection")
         try:
             self.pybullet.setGravity(0.0, 0.0, -9.81)
+            self.scene_objects = load_scene_objects(
+                self.pybullet, self.scene_object_specs, connection=self.connection
+            )
+            self._initial_object_poses = {
+                name: self.pybullet.getBasePositionAndOrientation(
+                    item.body_id, physicsClientId=self.connection
+                ) for name, item in self.scene_objects.items()
+            }
             snapshots = {
                 name: arm.initialize(self.connection)
                 for name, arm in self.arms.items()
             }
+            self.grasp_manager = GraspManager(
+                self.pybullet, self.connection, self.arms, self.scene_objects
+            )
+            if self.options.monitor:
+                try:
+                    from .monitor import PyBulletMonitor
+                    self.monitor = PyBulletMonitor(self)
+                except ImportError as error:
+                    raise PyBulletBackendError("PyQt6 is required when monitor: true") from error
             self._start_camera_worker(snapshots)
             if self.options.gui:
                 self.pybullet.resetDebugVisualizerCamera(
@@ -73,7 +104,9 @@ class PyBulletWorldRuntime:
             or "ECM" not in self.arms
         ):
             return
-        self.camera_worker = CameraWorker(self.arms, self.camera_options)
+        self.camera_worker = CameraWorker(
+            self.arms, self.camera_options, self.scene_object_specs
+        )
         self.camera_worker.start(self._camera_state(snapshots))
 
     def _camera_state(
@@ -90,19 +123,37 @@ class PyBulletWorldRuntime:
                 np.asarray([state[0] for state in states], dtype=float)
             )
         camera_pose = snapshots["ECM"].measured_cp_world
+        object_poses = tuple(
+            self.pybullet.getBasePositionAndOrientation(
+                item.body_id, physicsClientId=self.connection
+            )
+            for item in self.scene_objects.values()
+        )
         return (
             *joint_positions,
             np.asarray(camera_pose.position, dtype=float),
             np.asarray(camera_pose.orientation, dtype=float).reshape(9),
+            object_poses,
         )
 
     def step(self) -> dict[str, ArmSnapshot]:
+        if self._reset_requested:
+            self._reset_scene()
+            self._reset_requested = False
         now_ns = time.monotonic_ns()
         now = now_ns * 1e-9
         for arm in self.arms.values():
             arm.prepare_step(now_ns, now)
         self.pybullet.stepSimulation()
         snapshots = {name: arm.finish_step() for name, arm in self.arms.items()}
+        if self.grasp_manager is not None:
+            self.grasp_manager.step(snapshots)
+        self._step_count += 1
+        if self.collision_debug is not None:
+            self.collision_debug.update()
+        if self.monitor is not None:
+            elapsed = max(time.monotonic() - self._rate_started_at, 1e-6)
+            self.monitor.update(snapshots, self._step_count / elapsed)
         if self.camera_worker is not None:
             self.camera_worker.submit(self._camera_state(snapshots))
             self.camera_worker.check()
@@ -110,6 +161,36 @@ class PyBulletWorldRuntime:
 
     def is_connected(self) -> bool:
         return self.connection >= 0 and bool(self.pybullet.isConnected(self.connection))
+
+    def request_reset(self) -> None:
+        self._reset_requested = True
+
+    def set_collision_debug(self, enabled: bool) -> None:
+        if enabled and self.collision_debug is None:
+            self.collision_debug = CollisionShapeOverlay(self.pybullet, self.connection)
+            for arm in self.arms.values():
+                self.collision_debug.add_urdf(arm.robot.body_id, arm.artifact.urdf_path)
+            for item in self.scene_objects.values():
+                self.collision_debug.add_urdf(
+                    item.body_id, resolve_asset_uri(item.spec.asset)
+                )
+        elif not enabled and self.collision_debug is not None:
+            self.collision_debug.clear()
+            self.collision_debug = None
+
+    def _reset_scene(self) -> None:
+        if self.grasp_manager is not None:
+            self.grasp_manager.release_all()
+        for arm in self.arms.values():
+            arm.reset_to_home()
+        for name, item in self.scene_objects.items():
+            position, orientation = self._initial_object_poses[name]
+            self.pybullet.resetBasePositionAndOrientation(
+                item.body_id, position, orientation, physicsClientId=self.connection
+            )
+            self.pybullet.resetBaseVelocity(
+                item.body_id, (0, 0, 0), (0, 0, 0), physicsClientId=self.connection
+            )
 
     def run(self, publish_snapshots, should_continue=None) -> None:
         period = 1.0 / self.options.simulation_rate_hz
@@ -129,6 +210,13 @@ class PyBulletWorldRuntime:
         if self.camera_worker is not None:
             self.camera_worker.close()
         self.camera_worker = None
+        if self.collision_debug is not None:
+            self.collision_debug.clear()
+        self.collision_debug = None
+        self.monitor = None
+        if self.grasp_manager is not None:
+            self.grasp_manager.release_all()
+        self.grasp_manager = None
         for arm in self.arms.values():
             arm.shutdown()
         if self.connection >= 0 and self.pybullet.isConnected(self.connection):

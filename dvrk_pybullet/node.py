@@ -11,7 +11,6 @@ import threading
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
-from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
@@ -49,12 +48,13 @@ from dvrk_simulator_base.rotations import quaternion_matrix_xyzw
 from dvrk_simulator_base.snapshots import ArmSnapshot, OperatingStateSnapshot
 from dvrk_simulator_base.types import JointState, Pose
 
+from .camera import CameraOptions
 from .configuration import (
     load_installed_robot_config,
     load_installed_scene_config,
     load_simulator_config,
+    resolve_scene_path,
 )
-from .camera import CameraOptions
 from .errors import PyBulletDependencyError
 from .runtime import RuntimeOptions
 from .urdf_materializer import SUPPORTED_ROBOTS
@@ -373,74 +373,46 @@ class DvrkPyBulletNode(Node):
     def __init__(
         self,
         *,
-        scene_config: str | None = None,
-        model: str | None = None,
-        instrument: str | None = None,
-        endoscope: str | None = None,
-        gui: bool | None = None,
-        simulation_rate_hz: float | None = None,
-        state_publish_rate_hz: float | None = None,
-        generated_root: str | None = None,
-        command_queue_capacity: int | None = None,
-        renderer: str | None = None,
+        scene_path: Path | None = None,
+        model: str = "PSM1",
+        instrument: str = "420006",
+        endoscope: str = "Si_straight",
+        gui: bool = True,
+        simulation_rate_hz: float = 120.0,
+        state_publish_rate_hz: float = 100.0,
+        generated_root: Path | None = None,
+        command_queue_capacity: int = 32,
+        renderer: str = "egl",
     ) -> None:
         super().__init__("dvrk_pybullet")
-        self.declare_parameter("scene_config", scene_config or "")
-        self.declare_parameter("model", model or "PSM1")
-        self.declare_parameter(
-            "instrument",
-            instrument or "420006",
-            descriptor=ParameterDescriptor(dynamic_typing=True),
-        )
-        self.declare_parameter("endoscope", endoscope or "Si_straight")
-        self.declare_parameter("gui", True if gui is None else gui)
-        self.declare_parameter(
-            "simulation_rate_hz",
-            120.0 if simulation_rate_hz is None else simulation_rate_hz,
-        )
-        self.declare_parameter(
-            "state_publish_rate_hz",
-            100.0 if state_publish_rate_hz is None else state_publish_rate_hz,
-        )
-        self.declare_parameter("generated_root", generated_root or "")
-        self.declare_parameter(
-            "command_queue_capacity",
-            32 if command_queue_capacity is None else command_queue_capacity,
-        )
-        self.declare_parameter("renderer", renderer or "egl")
-        scene_path = str(self.get_parameter("scene_config").value)
-        if scene_path:
-            path = Path(scene_path).expanduser()
-            if not path.is_absolute():
-                share = Path(get_package_share_directory("dvrk_pybullet"))
-                path = share / "share" / "scenes" / path
-            scene = load_installed_scene_config(path)
+        if scene_path is not None:
+            scene = load_installed_scene_config(scene_path)
             configs = scene.robots
+            scene_objects = scene.objects
             self.camera_options = replace(
                 CameraOptions.from_scene(scene.camera),
-                renderer=str(self.get_parameter("renderer").value),
+                renderer=renderer,
             )
         else:
-            model = str(self.get_parameter("model").value).upper()
+            model = model.upper()
             if model not in SUPPORTED_ROBOTS:
                 raise ValueError(f"model must be one of {SUPPORTED_ROBOTS}")
-            asset = (
-                str(self.get_parameter("endoscope").value)
-                if model == "ECM"
-                else str(self.get_parameter("instrument").value)
-            )
+            asset = endoscope if model == "ECM" else instrument
             configs = (load_installed_robot_config(model, asset),)
+            scene_objects = ()
             self.camera_options = CameraOptions(enabled=False)
 
         self.configs = tuple(configs)
-        self.gui = bool(self.get_parameter("gui").value)
-        self.simulation_rate_hz = float(self.get_parameter("simulation_rate_hz").value)
-        state_rate = float(self.get_parameter("state_publish_rate_hz").value)
+        self.scene_objects = tuple(scene_objects)
+        self.gui = bool(gui)
+        self.simulation_rate_hz = float(simulation_rate_hz)
+        state_rate = float(state_publish_rate_hz)
         if self.simulation_rate_hz <= 0.0 or state_rate <= 0.0:
             raise ValueError("simulation and state publish rates must be positive")
-        generated = str(self.get_parameter("generated_root").value)
-        self.generated_root = generated or None
-        capacity = int(self.get_parameter("command_queue_capacity").value)
+        self.generated_root = generated_root
+        capacity = int(command_queue_capacity)
+        if capacity <= 0:
+            raise ValueError("command queue capacity must be positive")
 
         ecm_config = next((item for item in self.configs if item.type == "ECM"), None)
         self.arm_interfaces: dict[str, ArmRosInterface] = {}
@@ -555,7 +527,17 @@ def main(args=None) -> int:
         config_path = (
             Path(get_package_share_directory("dvrk_pybullet")) / "share" / "pybullet.yaml"
         )
-    config = load_simulator_config(config_path)
+    try:
+        config = load_simulator_config(config_path)
+        scene_selection = options.scene_config or config.scene
+        scene_path = (
+            resolve_scene_path(config_path, scene_selection)
+            if scene_selection not in (None, "")
+            else None
+        )
+    except (FileNotFoundError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     rclpy.init(args=raw_args)
     node = None
     runtime = None
@@ -563,7 +545,7 @@ def main(args=None) -> int:
     executor_thread = None
     try:
         node = DvrkPyBulletNode(
-            scene_config=options.scene_config or config.scene,
+            scene_path=scene_path,
             gui=config.gui if options.gui is None else options.gui,
             simulation_rate_hz=config.simulation_rate_hz,
             state_publish_rate_hz=config.state_publish_rate_hz,
@@ -577,11 +559,13 @@ def main(args=None) -> int:
             node.configs,
             RuntimeOptions(
                 gui=node.gui,
+                monitor=config.monitor,
                 simulation_rate_hz=node.simulation_rate_hz,
                 generated_root=node.generated_root,
             ),
             {name: interface.commands for name, interface in node.arm_interfaces.items()},
             camera_options=node.camera_options,
+            scene_objects=node.scene_objects,
         )
         node.install_initial_snapshots(runtime.initialize())
         node.get_logger().info(
@@ -606,6 +590,9 @@ def main(args=None) -> int:
     except PyBulletDependencyError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
+    except (FileNotFoundError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     finally:
         if runtime is not None:
             runtime.shutdown()

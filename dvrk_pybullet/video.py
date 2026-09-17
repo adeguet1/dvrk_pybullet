@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import mmap
 import os
 from pathlib import Path
@@ -51,6 +52,23 @@ def _prepare_socket_path(path: Path) -> None:
     path.unlink()
 
 
+def _prepare_abstract_socket(reference: str) -> None:
+    """Reject an abstract socket name already owned by another publisher."""
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.bind(f"\0{reference[1:]}")
+    except OSError as error:
+        if error.errno == errno.EADDRINUSE:
+            raise PyBulletBackendError(
+                f"camera abstract socket is already in use: {reference}"
+            ) from error
+        raise PyBulletBackendError(
+            f"could not check camera abstract socket {reference}: {error}"
+        ) from error
+    finally:
+        probe.close()
+
+
 class UnixFdVideoSink:
     """Push RGBA frames without unbounded queueing; Gst owns each submitted fd."""
 
@@ -66,7 +84,9 @@ class UnixFdVideoSink:
         if self.pipeline is not None:
             return
         abstract_socket = isinstance(self.options.socket_path, str)
-        if not abstract_socket:
+        if abstract_socket:
+            _prepare_abstract_socket(self.options.socket_path)
+        else:
             _prepare_socket_path(self.options.socket_path)
         Gst = self.Gst
         pipeline = Gst.Pipeline.new("dvrk-camera")
@@ -115,7 +135,10 @@ class UnixFdVideoSink:
         self.source = source
         change = pipeline.set_state(Gst.State.PLAYING)
         if change == Gst.StateChangeReturn.FAILURE:
+            detail = self._bus_error_detail()
             self.close()
+            if detail is not None:
+                raise PyBulletBackendError(f"camera GStreamer pipeline error: {detail}")
             raise PyBulletBackendError("camera GStreamer pipeline failed to start")
         pipeline.get_state(2 * Gst.SECOND)
         self._raise_bus_error()
@@ -129,14 +152,18 @@ class UnixFdVideoSink:
                 )
 
     def _raise_bus_error(self) -> None:
+        detail = self._bus_error_detail()
+        if detail is not None:
+            raise PyBulletBackendError(f"camera GStreamer pipeline error: {detail}")
+
+    def _bus_error_detail(self) -> str | None:
         if self.pipeline is None:
-            return
+            return None
         message = self.pipeline.get_bus().pop_filtered(self.Gst.MessageType.ERROR)
         if message is not None:
             error, debug = message.parse_error()
-            raise PyBulletBackendError(
-                f"camera GStreamer pipeline error: {error}; {debug or 'no details'}"
-            )
+            return f"{error}; {debug or 'no details'}"
+        return None
 
     def push(self, frame: VideoFrame) -> None:
         if self.source is None:

@@ -1,5 +1,7 @@
 import numpy as np
+import pytest
 import rclpy
+from pathlib import Path
 from types import SimpleNamespace
 from crtk_msgs.msg import StringStamped
 from geometry_msgs.msg import PoseStamped
@@ -70,6 +72,16 @@ def test_regular_command_line_arguments_are_parsed_without_ros_arguments():
     assert args.gui is True
 
 
+def test_unknown_scene_is_reported_without_a_traceback(capsys):
+    assert node_module.main(["--scene", "does-not-exist"]) == 2
+    error = capsys.readouterr().err
+    assert "Scene configuration not found: does-not-exist" in error
+    assert "Searched scene paths:" in error
+    assert "Available scenes:" in error
+    assert "ECM_PSM1_PSM2.yaml" in error
+    assert "Traceback" not in error
+
+
 def test_simulator_config_keeps_runtime_settings_out_of_cli(tmp_path):
     path = tmp_path / "pybullet.yaml"
     path.write_text(
@@ -91,6 +103,18 @@ def test_simulator_config_defaults_to_gui(tmp_path):
     assert node_module.load_simulator_config(path).gui is True
 
 
+def test_simulator_config_requires_boolean_gui_and_monitor_values(tmp_path):
+    path = tmp_path / "pybullet.yaml"
+    path.write_text("gui: false\nmonitor: false\n", encoding="utf-8")
+    config = node_module.load_simulator_config(path)
+    assert config.gui is False
+    assert config.monitor is False
+
+    path.write_text("gui: false\nmonitor: 'false'\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="monitor must be true or false"):
+        node_module.load_simulator_config(path)
+
+
 def test_gui_argument_accepts_false_and_flag_forms():
     assert node_module._parse_command_line(["--gui", "false"]).gui is False
     assert node_module._parse_command_line(["--gui"]).gui is True
@@ -107,10 +131,10 @@ def test_node_exposes_state_and_command_topics(monkeypatch, tmp_path):
     monkeypatch.setattr(
         node_module, "load_installed_robot_config", load_config
     )
-    rclpy.init(args=["--ros-args", "-p", "instrument:=420006"])
+    rclpy.init()
     node = None
     try:
-        node = node_module.DvrkPyBulletNode()
+        node = node_module.DvrkPyBulletNode(instrument="420006")
         assert received == [("PSM1", "420006")]
         topics = {
             node.measured_js.topic_name,
@@ -225,13 +249,14 @@ def test_scene_creates_independent_psm_and_ecm_interfaces(monkeypatch, tmp_path)
         node_module,
         "load_installed_scene_config",
         lambda *_: SimpleNamespace(
-            robots=(_config(), _ecm_config()), camera=SceneCamera()
+            robots=(_config(), _ecm_config()), camera=SceneCamera(), objects=()
         ),
     )
-    rclpy.init(args=["--ros-args", "-p", "scene_config:=/tmp/test.yaml"])
+    monkeypatch.setattr(node_module, "resolve_scene_path", lambda *_: "/tmp/test.yaml")
+    rclpy.init()
     node = None
     try:
-        node = node_module.DvrkPyBulletNode()
+        node = node_module.DvrkPyBulletNode(scene_path=Path("/tmp/test.yaml"))
         assert set(node.arm_interfaces) == {"PSM1", "ECM"}
         psm = node.arm_interfaces["PSM1"]
         ecm = node.arm_interfaces["ECM"]
@@ -248,20 +273,22 @@ def test_scene_creates_independent_psm_and_ecm_interfaces(monkeypatch, tmp_path)
             rclpy.shutdown()
 
 
-def test_regular_arguments_supply_node_parameter_defaults(monkeypatch, tmp_path):
+def test_node_uses_the_scene_path_supplied_by_the_command_layer(monkeypatch, tmp_path):
     monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path))
     received = []
 
     def load_scene(path):
         received.append(path)
-        return SimpleNamespace(robots=(_config(), _ecm_config()), camera=SceneCamera())
+        return SimpleNamespace(
+            robots=(_config(), _ecm_config()), camera=SceneCamera(), objects=()
+        )
 
     monkeypatch.setattr(node_module, "load_installed_scene_config", load_scene)
     rclpy.init()
     node = None
     try:
         node = node_module.DvrkPyBulletNode(
-            scene_config="ECM_PSM1_PSM2.yaml",
+            scene_path=Path("ECM_PSM1_PSM2.yaml"),
             gui=True,
         )
         assert received[0].name == "ECM_PSM1_PSM2.yaml"

@@ -8,10 +8,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from dvrk_simulator_base.types import Pose
+
 from .backend import load_pybullet
 from .camera import PyBulletCamera
 from .errors import PyBulletBackendError
 from .robot import load_robot
+from .scene_objects import load_scene_objects
 from .video import UnixFdVideoSink
 
 
@@ -26,24 +28,31 @@ class RenderRobot:
 
 
 class RenderScene:
-    def __init__(self, robots, camera_options, video_sink_factory=UnixFdVideoSink):
+    def __init__(
+        self, robots, camera_options, scene_objects=(), video_sink_factory=UnixFdVideoSink
+    ):
         self.robots = robots
         self.camera_options = camera_options
+        self.scene_object_specs = scene_objects
         self._video_sink_factory = video_sink_factory
         self.pybullet = load_pybullet()
         self.connection = -1
         self._egl_plugin = -1
         self.arms = {}
+        self.scene_objects = {}
         self.camera = None
         self.video_sink = None
 
-    def initialize(self):
+    def initialize(self) -> None:
         self.connection = self.pybullet.connect(self.pybullet.DIRECT)
         if self.connection < 0:
             raise PyBulletBackendError("could not connect the camera PyBullet world")
         # PyBullet's EGL plugin must be registered before creating visual mesh
         # shapes.  This is independent of the removed MTL/color workarounds.
         self._initialize_camera()
+        self.scene_objects = load_scene_objects(
+            self.pybullet, self.scene_object_specs, connection=self.connection
+        )
         for spec in self.robots:
             robot = load_robot(
                 self.pybullet, spec.urdf_path, spec.joint_names,
@@ -57,9 +66,11 @@ class RenderScene:
             )
 
     def apply_state(self, state):
-        *joint_states, position, orientation = state
-        if len(joint_states) != len(self.robots):
+        expected_length = len(self.robots) + 3
+        if len(state) != expected_length:
             raise PyBulletBackendError("camera state does not match the render scene")
+        joint_states = state[: len(self.robots)]
+        position, orientation, object_poses = state[-3:]
         for spec, positions in zip(self.robots, joint_states):
             body = self.arms[spec.name].robot.body_id
             if len(positions) != spec.joint_count:
@@ -71,6 +82,16 @@ class RenderScene:
                     body, index, float(value),
                     physicsClientId=self.connection,
                 )
+        if len(object_poses) != len(self.scene_objects):
+            raise PyBulletBackendError("camera object state does not match the render scene")
+        for item, pose in zip(self.scene_objects.values(), object_poses):
+            object_position, object_orientation = pose
+            self.pybullet.resetBasePositionAndOrientation(
+                item.body_id,
+                object_position,
+                object_orientation,
+                physicsClientId=self.connection,
+            )
         return Pose(position, orientation.reshape(3, 3))
 
     def render(self, state, timestamp):
@@ -103,9 +124,7 @@ class RenderScene:
         )
         self.video_sink = self._video_sink_factory(options)
         self.video_sink.start()
-
-
-    def close(self):
+    def close(self) -> None:
         try:
             if self.video_sink is not None:
                 self.video_sink.close()

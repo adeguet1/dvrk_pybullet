@@ -37,7 +37,6 @@ class FakePyBullet:
     def resetJointState(self, body_id, index, position, targetVelocity=0.0):
         self.reset_calls.append((body_id, index, position, targetVelocity))
 
-
 def test_robot_mapping_and_reset_follow_configured_name_order(tmp_path):
     urdf = tmp_path / "model.urdf"
     urdf.write_text("<robot name='test'/>", encoding="utf-8")

@@ -2,6 +2,7 @@
 # EGL provides GPU camera rendering even without the desktop GUI.
 renderer: egl
 gui: false
+monitor: true
 simulation_rate_hz: 120.0
 state_publish_rate_hz: 100.0
 command_queue_capacity: 32

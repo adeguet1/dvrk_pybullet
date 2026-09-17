@@ -21,6 +21,7 @@ def generate_launch_description():
     system_config = (
         open_xr_directory / "system-MTML-MTMR-OpenXR-patient-cart-ROS.json"
     )
+    overlay_config = open_xr_directory / "dvrk-console-overlay.json"
     simulator = Node(
         package="dvrk_pybullet",
         executable="simulator",
@@ -39,6 +40,13 @@ def generate_launch_description():
         cwd=str(open_xr_directory),
         arguments=["--json-config", str(system_config)],
     )
+    console_overlay = Node(
+        package="dvrk_console",
+        executable="stereo_display",
+        name="pybullet_console_overlay",
+        output="screen",
+        arguments=["-c", str(overlay_config)],
+    )
 
     stop_with_simulator = RegisterEventHandler(
         OnProcessExit(
@@ -52,6 +60,12 @@ def generate_launch_description():
             on_exit=[EmitEvent(event=Shutdown(reason="dvrk_system exited"))],
         )
     )
+    stop_with_overlay = RegisterEventHandler(
+        OnProcessExit(
+            target_action=console_overlay,
+            on_exit=[EmitEvent(event=Shutdown(reason="console video overlay exited"))],
+        )
+    )
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -60,8 +74,10 @@ def generate_launch_description():
                 description="show the PyBullet desktop GUI",
             ),
             simulator,
+            console_overlay,
             dvrk_system,
             stop_with_simulator,
             stop_with_console,
+            stop_with_overlay,
         ]
     )

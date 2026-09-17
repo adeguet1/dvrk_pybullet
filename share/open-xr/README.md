@@ -7,8 +7,10 @@ left and right ECM views into a side-by-side stream:
 - `ECM_PSM1_PSM2_PSM3.yaml` provides PSM1, PSM2, PSM3, and ECM through ROS;
 - `system-MTML-MTMR-OpenXR-patient-cart-ROS.json` imports those four ROS arms
   into `dvrk_system` and obtains MTML, MTMR, and console inputs from OpenXR;
-- `sawOpenXR-pybullet-unixfd.json` receives the ECM image from PyBullet's
-  `@dvrk:pybullet:stereo_source` GStreamer Unix-FD socket.
+- `dvrk-console-overlay.json` consumes PyBullet's raw ECM image from
+  `@dvrk:pybullet:stereo_source`, adds the standard dVRK console overlay, and
+  publishes `@dvrk:console:stereo_overlay`;
+- `sawOpenXR-pybullet-unixfd.json` receives that overlayed stream for the HMD.
 
 These integration files do not make the external packages runtime dependencies
 of `dvrk_pybullet`. Install and source them separately when using this example:
@@ -32,8 +34,9 @@ source ~/wss/dvrk/install/setup.bash
 ros2 launch dvrk_pybullet open_xr.launch.py
 ```
 
-The launch file starts the simulator and optional `dvrk_system` together.
-`sawOpenXR` retries its video source until the PyBullet socket is available.
+The launch file starts the simulator, dVRK console video overlay, and optional
+`dvrk_system` together.  `sawOpenXR` retries its video source until the overlay
+socket is available.
 Override GUI mode when needed:
 
 ```bash

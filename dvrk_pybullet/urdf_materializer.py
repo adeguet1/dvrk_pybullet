@@ -48,7 +48,7 @@ def _expand_virtual_robot(
     instrument: str | None,
     endoscope: str | None,
 ) -> str:
-    mappings = {"parent_link_": parent_link}
+    mappings = {"parent_link_": parent_link, "show_rcm": "false"}
     if instrument is not None:
         mappings.update({"instrument": instrument, "is_virtual": "true"})
     if endoscope is not None:

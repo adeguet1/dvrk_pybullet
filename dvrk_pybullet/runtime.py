@@ -30,6 +30,7 @@ from .urdf_materializer import MaterializedUrdf, materialize_virtual_robot
 @dataclass(frozen=True)
 class RuntimeOptions:
     gui: bool = False
+    monitor: bool = False
     simulation_rate_hz: float = 120.0
     generated_root: Path | None = None
 
@@ -446,6 +447,24 @@ class PyBulletRuntime:
                 self._jaw_setpoint,
                 self._jaw_velocity,
             )
+
+    def reset_to_home(self) -> None:
+        """Restore this kinematic arm to its initial commanded state."""
+        self._joint_setpoint = np.array(self.config.home_position, dtype=float, copy=True)
+        self._joint_velocity = np.zeros_like(self._joint_setpoint)
+        self._jaw_setpoint = 0.0
+        self._jaw_velocity = 0.0
+        self._joint_trajectory = None
+        self._jaw_trajectory = None
+        self._apply_setpoints()
+        self._apply_jaw_setpoint()
+
+    @property
+    def tool_link_index(self) -> int:
+        """PyBullet link used as the fixed frame for grasp attachments."""
+        if self._tool_link_index is None:
+            raise RuntimeError("PyBullet runtime is not initialized")
+        return self._tool_link_index
 
     def snapshot(self) -> ArmSnapshot:
         if self.robot is None or self._tool_link_index is None:

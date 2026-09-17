@@ -80,8 +80,8 @@ ros2 run dvrk_pybullet simulator \
 ```
 
 Run `ros2 run dvrk_pybullet simulator --help` to see the deliberately small
-set of command-line selectors. ROS 2 launch files can configure runtime
-parameters such as rates and queue capacity.
+set of command-line selectors. Runtime settings such as rates and queue
+capacity belong in the simulator YAML file.
 
 ## ECM camera
 

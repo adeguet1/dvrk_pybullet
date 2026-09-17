@@ -2,18 +2,39 @@
 
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass
 from multiprocessing import get_context
+import os
 from queue import Empty, Full
+import signal
+import sys
 import time
+
 from .errors import PyBulletBackendError
 from .render_scene import RenderRobot, RenderScene
 
 
-def _worker_main(robots, camera_options, initial_state, states, status) -> None:
+def _exit_when_parent_exits() -> None:
+    """Ensure a spawned renderer cannot outlive a killed simulator process."""
+    if not sys.platform.startswith("linux"):
+        return
+    parent_pid = os.getppid()
+    libc = ctypes.CDLL(None, use_errno=True)
+    # PR_SET_PDEATHSIG is Linux-specific.  Do not make camera rendering depend
+    # on it being available, but use it whenever the platform provides it.
+    if libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0:
+        return
+    # The parent could have exited in the small interval before prctl above.
+    if os.getppid() != parent_pid:
+        raise SystemExit(0)
+
+
+def _worker_main(robots, camera_options, scene_objects, initial_state, states, status) -> None:
     scene = None
     try:
-        scene = RenderScene(robots, camera_options)
+        _exit_when_parent_exits()
+        scene = RenderScene(robots, camera_options, scene_objects)
         scene.initialize()
         latest = initial_state
         next_frame = time.monotonic()
@@ -58,6 +79,7 @@ def _worker_main(robots, camera_options, initial_state, states, status) -> None:
 class CameraWorker:
     arms: dict
     camera_options: object
+    scene_objects: tuple = ()
 
     def __post_init__(self) -> None:
         self._context = get_context("spawn")
@@ -81,7 +103,7 @@ class CameraWorker:
     def start(self, initial_state) -> None:
         self._process = self._context.Process(
             target=_worker_main,
-            args=(self._robots(), self.camera_options, initial_state,
+            args=(self._robots(), self.camera_options, self.scene_objects, initial_state,
                   self._states, self._status),
             daemon=True,
         )

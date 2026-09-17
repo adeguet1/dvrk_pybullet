@@ -1,8 +1,11 @@
 import os
+import socket
 
 import numpy as np
+import pytest
 
 from dvrk_pybullet.camera import CameraOptions, VideoFrame
+from dvrk_pybullet.errors import PyBulletBackendError
 from dvrk_pybullet.video import UnixFdVideoSink
 
 
@@ -32,3 +35,17 @@ def test_unixfd_sink_accepts_dvrk_abstract_socket():
         assert sink.frames_pushed == 1
     finally:
         sink.close()
+
+
+def test_unixfd_sink_reports_busy_abstract_socket():
+    reference = f"@dvrk:pybullet:pytest-busy-{os.getpid()}"
+    blocker = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    blocker.bind(f"\0{reference[1:]}")
+    blocker.listen()
+    sink = UnixFdVideoSink(CameraOptions(socket_path=reference, width=16, height=12))
+    try:
+        with pytest.raises(PyBulletBackendError, match="abstract socket is already in use"):
+            sink.start()
+    finally:
+        sink.close()
+        blocker.close()

@@ -94,6 +94,9 @@ class CameraOptions:
         unixfd = settings.get("unixfd", {}) or {}
         if not isinstance(unixfd, dict):
             raise ValueError("scene.camera.unixfd must be a mapping")
+        light = settings.get("light", {}) or {}
+        if not isinstance(light, dict):
+            raise ValueError("scene.camera.light must be a mapping")
         return cls(
             enabled=camera.mode != "off" and "unixfd" in transports,
             mode="mono" if camera.mode == "off" else camera.mode,
@@ -112,13 +115,11 @@ class CameraOptions:
             near_m=float(settings.get("near_clip_m", 0.005)),
             far_m=float(settings.get("far_clip_m", 10.0)),
             baseline_m=float(settings.get("baseline_m", 0.006)),
-            **{
-                "light_enabled": bool((settings.get("light", {}) or {}).get("enabled", True)),
-                "light_distance_m": float((settings.get("light", {}) or {}).get("distance_m", 1.0)),
-                "light_ambient": float((settings.get("light", {}) or {}).get("ambient", 0.45)),
-                "light_diffuse": float((settings.get("light", {}) or {}).get("diffuse", 0.65)),
-                "light_specular": float((settings.get("light", {}) or {}).get("specular", 0.15)),
-            },
+            light_enabled=bool(light.get("enabled", True)),
+            light_distance_m=float(light.get("distance_m", 1.0)),
+            light_ambient=float(light.get("ambient", 0.45)),
+            light_diffuse=float(light.get("diffuse", 0.65)),
+            light_specular=float(light.get("specular", 0.15)),
         )
 
 

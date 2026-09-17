@@ -3,7 +3,8 @@ scene:
   frames:
     PSM1: {position: [-0.100000000, 0.000000000, 0.173205081], orientation_xyzw: [0.000000000, -0.258819045, 0.000000000, 0.965925826]}
     PSM2: {position: [0.100000000, 0.000000000, 0.173205081], orientation_xyzw: [0.000000000, 0.258819045, 0.000000000, 0.965925826]}
-    ECM: {position: [0.000000000, 0.000000000, 0.200000000], orientation_xyzw: [0.000000000, 0.000000000, 0.000000000, 1.000000000]}
+    # Mount the neutral ECM 20 degrees forward; its own home joints stay neutral.
+    ECM: {position: [0.000000000, -0.173205081, 0.100000000], orientation_xyzw: [0.500000000, 0.000000000, 0.000000000, 0.866025404]}
   camera:
     mode: mono
     owner: ECM
