@@ -28,7 +28,7 @@ def generate_launch_description():
         output="screen",
         arguments=[
             "--config", str(simulator_config),
-            "--scene", str(scene),
+            "--scene", str(scene), LaunchConfiguration("scene"),
             "--gui", LaunchConfiguration("gui"),
         ],
     )
@@ -46,6 +46,12 @@ def generate_launch_description():
         name="pybullet_console_overlay",
         output="screen",
         arguments=["-c", str(overlay_config)],
+    )
+    start_system = Node(
+        package="dvrk_simulator_base",
+        executable="start_dvrk_system",
+        output="screen",
+        arguments=["--console", LaunchConfiguration("console")],
     )
 
     stop_with_simulator = RegisterEventHandler(
@@ -73,9 +79,20 @@ def generate_launch_description():
                 default_value="false",
                 description="show the PyBullet desktop GUI",
             ),
+            DeclareLaunchArgument(
+                "scene",
+                default_value="tray_cubes.yaml",
+                description="exercise scene YAML file (e.g. tray_cubes.yaml, peg_board_ring.yaml, or peg_board_CUHK.yaml)",
+            ),
+            DeclareLaunchArgument(
+                "console",
+                default_value="console",
+                description="dVRK console ROS namespace",
+            ),
             simulator,
             console_overlay,
             dvrk_system,
+            start_system,
             stop_with_simulator,
             stop_with_console,
             stop_with_overlay,

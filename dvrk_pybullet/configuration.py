@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 import yaml
 
@@ -80,7 +81,12 @@ def scene_search_paths(config_path: str | Path) -> tuple[Path, ...]:
     """Return the ordered directories used for a bare scene selection."""
     config = Path(config_path).expanduser().resolve()
     package_share = Path(get_package_share_directory("dvrk_pybullet"))
-    candidates = (config.parent / "scenes", package_share / "share" / "scenes")
+    simulator_base_share = Path(get_package_share_directory("dvrk_simulator_base"))
+    candidates = (
+        config.parent / "scenes",
+        package_share / "share" / "scenes",
+        simulator_base_share / "share" / "exercises",
+    )
     paths = []
     for path in candidates:
         path = path.resolve()
@@ -89,12 +95,32 @@ def scene_search_paths(config_path: str | Path) -> tuple[Path, ...]:
     return tuple(paths)
 
 
-def resolve_scene_path(config_path: str | Path, selection: str | Path) -> Path:
-    """Resolve an absolute path or a scene name found in the search paths."""
+def resolve_scene_path(
+    config_path: str | Path,
+    selection: str | Path | Sequence[str | Path],
+) -> Path | tuple[Path, ...]:
+    """Resolve an absolute path or scene name(s) found in the search paths."""
     config = Path(config_path).expanduser().resolve()
-    return SceneResolver(scene_search_paths(config), relative_root=config.parent).resolve(selection)
+    resolver = SceneResolver(scene_search_paths(config), relative_root=config.parent)
+    if isinstance(selection, (list, tuple)):
+        return resolver.resolve_all(selection)
+    return resolver.resolve(selection)
 
 
-def load_installed_scene_config(path: str | Path) -> SceneConfig:
+def load_installed_scene_config(
+    path: str | Path | Sequence[str | Path],
+    *,
+    search_paths: Sequence[Path] | None = None,
+) -> SceneConfig:
     share = Path(get_package_share_directory("dvrk_simulator_base"))
-    return load_scene_config(path, robot_config_root=share / "share" / "arms")
+    pybullet_share = Path(get_package_share_directory("dvrk_pybullet"))
+    default_search = (
+        pybullet_share / "share" / "scenes",
+        share / "share" / "exercises",
+    )
+    resolver = SceneResolver(tuple(search_paths or default_search))
+    return load_scene_config(
+        path,
+        robot_config_root=share / "share" / "arms",
+        resolver=resolver,
+    )

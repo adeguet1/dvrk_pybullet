@@ -37,10 +37,11 @@ ros2 launch dvrk_pybullet open_xr.launch.py
 The launch file starts the simulator, dVRK console video overlay, and optional
 `dvrk_system` together.  `sawOpenXR` retries its video source until the overlay
 socket is available.
-Override GUI mode when needed:
+Override GUI mode or select an exercise scene (`tray_cubes.yaml` by default, `peg_board_ring.yaml`, or `peg_board_CUHK.yaml`) when needed:
 
 ```bash
 ros2 launch dvrk_pybullet open_xr.launch.py \
+  scene:=peg_board_ring.yaml \
   gui:=true
 ```
 
@@ -51,7 +52,7 @@ be started first:
 source ~/wss/dvrk/.venv/bin/activate
 source ~/wss/dvrk/install/setup.bash
 ros2 run dvrk_pybullet simulator \
-  --scene ECM_PSM1_PSM2_PSM3.yaml \
+  --scene ECM_PSM1_PSM2_PSM3.yaml peg_board_ring.yaml \
   --gui true
 ```
 

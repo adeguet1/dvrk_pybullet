@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 import sys
 import threading
+from typing import Any, Sequence
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
@@ -373,7 +374,7 @@ class DvrkPyBulletNode(Node):
     def __init__(
         self,
         *,
-        scene_path: Path | None = None,
+        scene_path: Path | Sequence[Path] | None = None,
         model: str = "PSM1",
         instrument: str = "420006",
         endoscope: str = "Si_straight",
@@ -506,8 +507,9 @@ def _parse_command_line(args: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--scene",
         dest="scene_config",
+        nargs="+",
         metavar="FILE",
-        help="installed scene name or path to a scene YAML file",
+        help="installed scene name(s) or path(s) to scene YAML file(s)",
     )
     parser.add_argument(
         "--gui",
@@ -532,7 +534,7 @@ def main(args=None) -> int:
         scene_selection = options.scene_config or config.scene
         scene_path = (
             resolve_scene_path(config_path, scene_selection)
-            if scene_selection not in (None, "")
+            if scene_selection not in (None, "", (), [])
             else None
         )
     except (FileNotFoundError, ValueError) as error:

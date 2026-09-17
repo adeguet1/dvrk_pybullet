@@ -63,12 +63,12 @@ def _ecm_config():
 
 def test_regular_command_line_arguments_are_parsed_without_ros_arguments():
     args = node_module._parse_command_line([
-        "--scene", "ECM_PSM1_PSM2.yaml",
+        "--scene", "ECM_PSM1_PSM2.yaml", "peg_board_ring.yaml",
         "--gui", "true",
         "--ros-args", "-r", "__ns:=/simulation",
     ])
 
-    assert args.scene_config == "ECM_PSM1_PSM2.yaml"
+    assert args.scene_config == ["ECM_PSM1_PSM2.yaml", "peg_board_ring.yaml"]
     assert args.gui is True
 
 
