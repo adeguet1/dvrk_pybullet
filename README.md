@@ -59,29 +59,17 @@ an automatically closing ten-second preview.
 
 ## ROS simulator node
 
-Run the PyBullet owner loop and expose the initial CRTK state and joint-command
-topics:
+Start a configured scene and expose its CRTK ROS graph:
 
 ```shell
-ros2 run dvrk_pybullet simulator \
-  --model PSM1 \
-  --instrument 420006 \
-  --gui true
+ros2 launch dvrk_pybullet simulator.launch.py \
+  scene:=ECM_PSM1_PSM2.yaml
 ```
 
-## Multi-arm scenes
-
-Load PSM1, PSM2, and the ECM in one shared PyBullet world:
-
-```shell
-ros2 run dvrk_pybullet simulator \
-  --scene ECM_PSM1_PSM2.yaml \
-  --gui true
-```
-
-Run `ros2 run dvrk_pybullet simulator --help` to see the deliberately small
-set of command-line selectors. Runtime settings such as rates and queue
-capacity belong in the simulator YAML file.
+The only optional launch argument is `config:=/path/to/pybullet.yaml`. Runtime
+settings, including GUI, rates, queue capacity, renderer, and generated asset
+location, belong in that backend configuration. Robots, instruments, camera,
+and transport settings belong in the scene YAML.
 
 ## ECM camera
 
@@ -100,7 +88,7 @@ Start a scene containing an ECM, then connect a GStreamer viewer from another
 terminal:
 
 ```shell
-ros2 run dvrk_pybullet simulator --scene ECM_PSM1_PSM2.yaml --gui true
+ros2 launch dvrk_pybullet simulator.launch.py scene:=ECM_PSM1_PSM2.yaml
 
 gst-launch-1.0 unixfdsrc socket-path=dvrk:pybullet:mono_source \
   socket-type=abstract \

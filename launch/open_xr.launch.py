@@ -24,12 +24,12 @@ def generate_launch_description():
     overlay_config = open_xr_directory / "dvrk-console-overlay.json"
     simulator = Node(
         package="dvrk_pybullet",
-        executable="simulator",
+        executable="simulator_node",
         output="screen",
         arguments=[
             "--config", str(simulator_config),
-            "--scene", str(scene), LaunchConfiguration("scene"),
-            "--gui", LaunchConfiguration("gui"),
+            "--scene", str(scene),
+            "--scene", LaunchConfiguration("scene"),
         ],
     )
     dvrk_system = Node(
@@ -75,14 +75,9 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument(
-                "gui",
-                default_value="false",
-                description="show the PyBullet desktop GUI",
-            ),
-            DeclareLaunchArgument(
                 "scene",
                 default_value="tray_cubes.yaml",
-                description="exercise scene YAML file (e.g. tray_cubes.yaml, peg_board_ring.yaml, or peg_board_CUHK.yaml)",
+                description="Exercise scene YAML path or installed exercise filename",
             ),
             DeclareLaunchArgument(
                 "console",

@@ -42,9 +42,6 @@ class PyBulletWorldRuntime:
         self.collision_debug = None
         self._reset_requested = False
         self._initial_object_poses = {}
-        self.monitor = None
-        self._step_count = 0
-        self._rate_started_at = time.monotonic()
         self.camera_worker = None
         self.arms = {
             config.name: PyBulletRuntime(
@@ -78,12 +75,6 @@ class PyBulletWorldRuntime:
             self.grasp_manager = GraspManager(
                 self.pybullet, self.connection, self.arms, self.scene_objects
             )
-            if self.options.monitor:
-                try:
-                    from .monitor import PyBulletMonitor
-                    self.monitor = PyBulletMonitor(self)
-                except ImportError as error:
-                    raise PyBulletBackendError("PyQt6 is required when monitor: true") from error
             self._start_camera_worker(snapshots)
             if self.options.gui:
                 self.pybullet.resetDebugVisualizerCamera(
@@ -148,12 +139,8 @@ class PyBulletWorldRuntime:
         snapshots = {name: arm.finish_step() for name, arm in self.arms.items()}
         if self.grasp_manager is not None:
             self.grasp_manager.step(snapshots)
-        self._step_count += 1
         if self.collision_debug is not None:
             self.collision_debug.update()
-        if self.monitor is not None:
-            elapsed = max(time.monotonic() - self._rate_started_at, 1e-6)
-            self.monitor.update(snapshots, self._step_count / elapsed)
         if self.camera_worker is not None:
             self.camera_worker.submit(self._camera_state(snapshots))
             self.camera_worker.check()
@@ -213,7 +200,6 @@ class PyBulletWorldRuntime:
         if self.collision_debug is not None:
             self.collision_debug.clear()
         self.collision_debug = None
-        self.monitor = None
         if self.grasp_manager is not None:
             self.grasp_manager.release_all()
         self.grasp_manager = None

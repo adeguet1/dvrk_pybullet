@@ -18,7 +18,6 @@ from dvrk_simulator_base.scene import SceneConfig, SceneResolver, load_scene_con
 class SimulatorConfig:
     renderer: str = "egl"
     gui: bool = True
-    monitor: bool = False
     simulation_rate_hz: float = 120.0
     state_publish_rate_hz: float = 100.0
     generated_root: Path | None = None
@@ -58,7 +57,6 @@ def load_simulator_config(path: str | Path) -> SimulatorConfig:
     return SimulatorConfig(
         renderer=renderer,
         gui=_boolean(document.get("gui", True), source=source, field="gui"),
-        monitor=_boolean(document.get("monitor", False), source=source, field="monitor"),
         simulation_rate_hz=simulation_rate,
         state_publish_rate_hz=state_rate,
         generated_root=generated_root,

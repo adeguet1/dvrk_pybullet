@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 import xacro
 
 from .errors import PyBulletBackendError
-from .model_source import locate_dvrk_model
+from dvrk_simulator_base.model_source import locate_dvrk_model
 
 
 SUPPORTED_PSMS = ("PSM1", "PSM2", "PSM3")

@@ -8,6 +8,8 @@ from dataclasses import replace
 from pathlib import Path
 import sys
 import threading
+import time
+import os
 from typing import Any, Sequence
 
 import rclpy
@@ -17,6 +19,7 @@ from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 
 from crtk_msgs.msg import OperatingState, StringStamped
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from sensor_msgs.msg import JointState as JointStateMessage
 from std_msgs.msg import String
@@ -370,6 +373,9 @@ class ArmRosInterface:
             )
 
 
+from dvrk_simulator_base.ros_interface import ArmRosInterface, LatestSnapshot
+
+
 class DvrkPyBulletNode(Node):
     def __init__(
         self,
@@ -428,6 +434,11 @@ class DvrkPyBulletNode(Node):
                     self, config, capacity, ecm_interface=ecm
                 )
         self.create_timer(1.0 / state_rate, self._publish_latest)
+        self._diagnostics = self.create_publisher(DiagnosticArray, "/diagnostics", 10)
+        self._diagnostic_started_at = time.monotonic()
+        self._diagnostic_snapshot_count = 0
+        self._state_publish_rate_hz = state_rate
+        self.create_timer(1.0, self._publish_diagnostics)
         self._install_single_arm_compatibility(self.arm_interfaces[self.configs[0].name])
 
     def _install_single_arm_compatibility(self, interface: ArmRosInterface) -> None:
@@ -475,6 +486,31 @@ class DvrkPyBulletNode(Node):
     def accept_snapshots(self, snapshots: dict[str, ArmSnapshot]) -> None:
         for name, snapshot in snapshots.items():
             self.arm_interfaces[name].snapshots.set(snapshot)
+        self._diagnostic_snapshot_count += 1
+
+    def _publish_diagnostics(self) -> None:
+        now = time.monotonic()
+        elapsed = max(now - self._diagnostic_started_at, 1e-6)
+        simulation_hz = self._diagnostic_snapshot_count / elapsed
+        self._diagnostic_started_at = now
+        self._diagnostic_snapshot_count = 0
+        status = DiagnosticStatus()
+        status.name = "dvrk_pybullet/runtime"
+        status.hardware_id = "dvrk_pybullet"
+        status.level = (
+            DiagnosticStatus.OK if simulation_hz > 0.0 else DiagnosticStatus.WARN
+        )
+        status.message = "running" if simulation_hz > 0.0 else "waiting for simulation"
+        status.values = [
+            KeyValue(key="simulation_hz", value=f"{simulation_hz:.1f}"),
+            KeyValue(key="state_publish_hz", value=f"{self._state_publish_rate_hz:.1f}"),
+            KeyValue(key="arms", value=str(len(self.arm_interfaces))),
+            KeyValue(key="camera_enabled", value=str(self.camera_options.enabled).lower()),
+        ]
+        message = DiagnosticArray()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.status = [status]
+        self._diagnostics.publish(message)
 
     def _publish_latest(self) -> None:
         for interface in self.arm_interfaces.values():
@@ -488,35 +524,14 @@ def _spin_executor(executor: SingleThreadedExecutor) -> None:
         pass
 
 
-def _boolean_argument(value: str) -> bool:
-    normalized = value.lower()
-    if normalized in ("true", "yes", "on", "1"):
-        return True
-    if normalized in ("false", "no", "off", "0"):
-        return False
-    raise argparse.ArgumentTypeError(
-        f"expected true or false for a boolean argument, got {value!r}"
-    )
-
-
 def _parse_command_line(args: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config", type=Path, help="simulator settings YAML (default: installed pybullet.yaml)"
     )
     parser.add_argument(
-        "--scene",
-        dest="scene_config",
-        nargs="+",
-        metavar="FILE",
-        help="installed scene name(s) or path(s) to scene YAML file(s)",
-    )
-    parser.add_argument(
-        "--gui",
-        type=_boolean_argument,
-        nargs="?",
-        const=True,
-        help="show the PyBullet GUI (true or false; --gui alone means true)",
+        "--scene", type=Path, required=True, action="append", metavar="FILE",
+        help="scene YAML path or installed scene filename; may be repeated internally",
     )
     return parser.parse_args(remove_ros_args(args))
 
@@ -531,11 +546,9 @@ def main(args=None) -> int:
         )
     try:
         config = load_simulator_config(config_path)
-        scene_selection = options.scene_config or config.scene
-        scene_path = (
-            resolve_scene_path(config_path, scene_selection)
-            if scene_selection not in (None, "", (), [])
-            else None
+        scene_path = resolve_scene_path(
+            config_path,
+            options.scene[0] if len(options.scene) == 1 else options.scene,
         )
     except (FileNotFoundError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
@@ -548,7 +561,7 @@ def main(args=None) -> int:
     try:
         node = DvrkPyBulletNode(
             scene_path=scene_path,
-            gui=config.gui if options.gui is None else options.gui,
+            gui=False if "DVRK_SIMULATOR_TEST_TIMEOUT" in os.environ else config.gui,
             simulation_rate_hz=config.simulation_rate_hz,
             state_publish_rate_hz=config.state_publish_rate_hz,
             generated_root=(
@@ -561,7 +574,6 @@ def main(args=None) -> int:
             node.configs,
             RuntimeOptions(
                 gui=node.gui,
-                monitor=config.monitor,
                 simulation_rate_hz=node.simulation_rate_hz,
                 generated_root=node.generated_root,
             ),
@@ -586,7 +598,12 @@ def main(args=None) -> int:
             target=_spin_executor, args=(executor,), daemon=True
         )
         executor_thread.start()
-        runtime.run(node.accept_snapshots, rclpy.ok)
+        timeout = os.environ.get("DVRK_SIMULATOR_TEST_TIMEOUT")
+        deadline = None if timeout is None else time.monotonic() + float(timeout)
+        runtime.run(
+            node.accept_snapshots,
+            lambda: rclpy.ok() and (deadline is None or time.monotonic() < deadline),
+        )
     except KeyboardInterrupt:
         pass
     except PyBulletDependencyError as error:

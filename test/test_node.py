@@ -61,15 +61,13 @@ def _ecm_config():
     )
 
 
-def test_regular_command_line_arguments_are_parsed_without_ros_arguments():
+def test_scene_command_line_argument_is_parsed_without_ros_arguments():
     args = node_module._parse_command_line([
-        "--scene", "ECM_PSM1_PSM2.yaml", "peg_board_ring.yaml",
-        "--gui", "true",
+        "--scene", "ECM_PSM1_PSM2.yaml",
         "--ros-args", "-r", "__ns:=/simulation",
     ])
 
-    assert args.scene_config == ["ECM_PSM1_PSM2.yaml", "peg_board_ring.yaml"]
-    assert args.gui is True
+    assert args.scene == [Path("ECM_PSM1_PSM2.yaml")]
 
 
 def test_unknown_scene_is_reported_without_a_traceback(capsys):
@@ -103,21 +101,20 @@ def test_simulator_config_defaults_to_gui(tmp_path):
     assert node_module.load_simulator_config(path).gui is True
 
 
-def test_simulator_config_requires_boolean_gui_and_monitor_values(tmp_path):
+def test_simulator_config_requires_boolean_gui_value(tmp_path):
     path = tmp_path / "pybullet.yaml"
-    path.write_text("gui: false\nmonitor: false\n", encoding="utf-8")
+    path.write_text("gui: false\n", encoding="utf-8")
     config = node_module.load_simulator_config(path)
     assert config.gui is False
-    assert config.monitor is False
 
-    path.write_text("gui: false\nmonitor: 'false'\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="monitor must be true or false"):
+    path.write_text("gui: 'false'\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="gui must be true or false"):
         node_module.load_simulator_config(path)
 
 
-def test_gui_argument_accepts_false_and_flag_forms():
-    assert node_module._parse_command_line(["--gui", "false"]).gui is False
-    assert node_module._parse_command_line(["--gui"]).gui is True
+def test_scene_argument_is_required():
+    with pytest.raises(SystemExit):
+        node_module._parse_command_line([])
 
 
 def test_node_exposes_state_and_command_topics(monkeypatch, tmp_path):

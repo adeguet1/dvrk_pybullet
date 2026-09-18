@@ -45,25 +45,3 @@ ros2 launch dvrk_pybullet open_xr.launch.py \
   gui:=true
 ```
 
-For manual startup, source the workspace in two terminals. Either process may
-be started first:
-
-```bash
-source ~/wss/dvrk/.venv/bin/activate
-source ~/wss/dvrk/install/setup.bash
-ros2 run dvrk_pybullet simulator \
-  --scene ECM_PSM1_PSM2_PSM3.yaml peg_board_ring.yaml \
-  --gui true
-```
-
-In the second terminal, run `dvrk_system` from this configuration directory;
-the saw component resolves its `configure-parameter` relative to the current
-directory:
-
-```bash
-source ~/wss/dvrk/install/setup.bash
-openxr_config="$(ros2 pkg prefix dvrk_pybullet)/share/dvrk_pybullet/share/open-xr"
-cd "$openxr_config"
-ros2 run dvrk_robot dvrk_system \
-  -j system-MTML-MTMR-OpenXR-patient-cart-ROS.json
-```
